@@ -32,6 +32,7 @@ jobs:
             cpp_compiler: cl
             cmake_generator: "Visual Studio 17 2022"
 
+
     steps:
     - uses: actions/checkout@v4
       with:
@@ -49,21 +50,18 @@ jobs:
         echo "build-output-dir=${BUILD_OUTPUT}" >> "$GITHUB_OUTPUT"
         echo "install-dir=${INSTALL_DIR}" >> "$GITHUB_OUTPUT"
 
-    - name: Install ICU and libxml2 (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
+    - name: Install ICU (Ubuntu/macOS)
+      if: matrix.os != 'windows-latest'
       run: |
-        sudo apt-get update && sudo apt-get install -y libicu-dev icu-devtools libxml2-dev
-        echo "ICU_ROOT=/usr" >> $GITHUB_ENV
-        echo "LIBXML2_ROOT=/usr" >> $GITHUB_ENV
+        if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+          sudo apt-get update && sudo apt-get install -y libicu-dev icu-devtools
+          echo "ICU_ROOT=/usr" >> $GITHUB_ENV
+        elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          brew install icu4c
+          echo "ICU_ROOT=$(brew --prefix icu4c)" >> $GITHUB_ENV
+        fi
 
-    - name: Install ICU and libxml2 (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install icu4c libxml2
-        echo "ICU_ROOT=$(brew --prefix icu4c)" >> $GITHUB_ENV
-        echo "LIBXML2_ROOT=$(brew --prefix libxml2)" >> $GITHUB_ENV
-
-    - name: Install vcpkg and dependencies (Windows)
+    - name: Install vcpkg and ICU (Windows)
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
@@ -71,29 +69,8 @@ jobs:
         git clone https://github.com/microsoft/vcpkg.git $vcpkg_root
         cd $vcpkg_root
         .\bootstrap-vcpkg.bat
-        .\vcpkg install icu:x64-windows libxml2:x64-windows
+        .\vcpkg install icu:x64-windows
         echo "ICU_ROOT=$vcpkg_root\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        echo "LIBXML2_ROOT=$vcpkg_root\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-    - name: Fix ICU cmake file (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: pwsh
-      run: |
-        $ICU_CMAKE_FILE="${{ steps.strings.outputs.project-root-dir }}/cmake/dependICU.cmake"
-        echo "Content of dependICU.cmake:"
-        cat $ICU_CMAKE_FILE
-        
-        # Create a backup
-        Copy-Item -Path $ICU_CMAKE_FILE -Destination "${ICU_CMAKE_FILE}.bak"
-        
-        # Replace the entire file with a simpler version that just sets the variables
-        @"
-# Override ICU detection - manually set by CI system
-set(ICU_INCLUDE_DIR "${{ env.ICU_ROOT }}/include")
-set(ICU_LIBRARY_DIR "${{ env.ICU_ROOT }}/lib")
-set(ICU_LIBRARY "${{ env.ICU_ROOT }}/lib/icuuc.lib")
-set(ICU_FOUND TRUE)
-"@ | Out-File -FilePath $ICU_CMAKE_FILE -Encoding utf8
 
     - name: Configure CMake (Non-Windows)
       if: matrix.os != 'windows-latest'
@@ -117,18 +94,15 @@ set(ICU_FOUND TRUE)
         echo "Using INSTALL_DIR: $INSTALL_DIR"
         echo "Using PROJECT_DIR: $PROJECT_DIR"
 
-        cmake -B "$BUILD_DIR" `
-              -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} `
-              -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} `
-              -DCMAKE_BUILD_TYPE=Release `
-              -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" `
-              -DCMAKE_TOOLCHAIN_FILE="${{ runner.temp }}\vcpkg\scripts\buildsystems\vcpkg.cmake" `
-              -DICU_INCLUDE_DIR="${{ env.ICU_ROOT }}\include" `
-              -DICU_LIBRARY="${{ env.ICU_ROOT }}\lib\icuuc.lib" `
-              -DICU_LIBRARY_DIR="${{ env.ICU_ROOT }}\lib" `
-              -DICU_FOUND=TRUE `
-              -G "${{ matrix.cmake_generator }}" `
+        cmake -B "$BUILD_DIR" 
+              -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} 
+              -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} 
+              -DCMAKE_BUILD_TYPE=Release 
+              -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" 
+              -G "${{ matrix.cmake_generator }}" 
               -S "$PROJECT_DIR"
+
+
 
     - name: Get number of CPU cores
       uses: SimenB/github-actions-cpu-cores@v2
